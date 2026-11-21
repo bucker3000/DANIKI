@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de administración - DANIKI</title>
+</head>
+<body>
+
+    <h1>DANIKI</h1>
+    <h2>Panel de administración</h2>
+
+    <p id="estado">Verificando acceso...</p>
+    <h3>Inventario de productos</h3>
+
+<div id="inventario">
+    Cargando productos...
+</div>
+<hr>
+
+<button id="btnHistorialVentas" type="button">
+    Ver historial de ventas
+</button>
+
+<div id="historialVentas" hidden>
+    Cargando historial de ventas...
+</div>
+
+    <button id="cerrarSesion" hidden>Cerrar sesión</button>
+    <hr>
+
+<h3>Registrar nuevo producto</h3>
+
+<form id="formProducto">
+
+    <label>Nombre comercial:</label><br>
+    <input type="text" id="nombre" required><br><br>
+
+    <label>Marca:</label><br>
+    <input type="text" id="marca"><br><br>
+
+    <label>Modelo:</label><br>
+    <input type="text" id="modelo"><br><br>
+
+    <label>Procedencia:</label><br>
+    <select id="procedencia">
+        <option value="">Seleccionar</option>
+        <option value="Original americano">Original americano</option>
+        <option value="Marca coreana">Marca coreana</option>
+        <option value="Otra procedencia">Otra procedencia</option>
+    </select><br><br>
+
+    <label>Género:</label><br>
+    <select id="genero" required>
+        <option value="">Seleccionar</option>
+        <option value="Hombre">Hombre</option>
+        <option value="Mujer">Mujer</option>
+        <option value="Unisex">Unisex</option>
+    </select><br><br>
+
+    <label>Talla:</label><br>
+    <input type="number" id="talla" min="19" max="46" step="1" required><br><br>
+
+    <label>Centímetros (opcional):</label><br>
+    <input type="number" id="cm" min="0" step="0.1"><br><br>
+
+    <label>Precio en Bs:</label><br>
+    <input type="number" id="precio" min="0" step="1" required><br><br>
+
+    <label>Cantidad disponible:</label><br>
+    <input type="number" id="cantidad" min="0" step="1" required><br><br>
+
+    <label>
+        <input type="checkbox" id="activo" checked>
+        Producto activo
+    </label><br><br>
+    <label>
+    <input type="checkbox" id="destacado">
+    Destacar en portada
+</label><br><br>
+    <label for="imagenesProducto">Fotografías del producto:</label><br>
+<input
+    type="file"
+    id="imagenesProducto"
+    accept="image/*"
+    multiple
+>
+
+<div id="imagenesActuales"
+     style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px;">
+</div>
+<br><br>
+
+    <button type="submit">Registrar producto</button>
+
+</form>
+
+<p id="mensajeProducto"></p>
+
+    <script type="module">
+        import { supabase } from './supabase-config.js';
+
+const estado = document.getElementById('estado');
+const botonCerrar = document.getElementById('cerrarSesion');
+const formularioProducto = document.getElementById('formProducto');
+const mensajeProducto = document.getElementById('mensajeProducto');
+const inventario = document.getElementById('inventario');
+const selectorImagenes = document.getElementById('imagenesProducto');
+const contenedorImagenes = document.getElementById('imagenesActuales');
+
+let productos = [];
+let productoEnEdicion = null;
+let imagenesParaConservar = [];
+
+
+// MOSTRAR INVENTARIO
+// SUBIR IMÁGENES A SUPABASE STORAGE
+async function subirImagenes(idProducto, archivos) {
+    const urls = [];
+
+    for (const archivo of archivos) {
+        const extension = archivo.name.split('.').pop();
+        const nombreArchivo = `${crypto.randomUUID()}.${extension}`;
+        const ruta = `${idProducto}/${nombreArchivo}`;
+
+        const { error } = await supabase.storage
+            .from('productos')
+            .upload(ruta, archivo);
+
+        if (error) {
+            throw error;
+        }
+
+        const { data } = supabase.storage
+            .from('productos')
+            .getPublicUrl(ruta);
+
+        urls.push(data.publicUrl);
+    }
+
+    return urls;
+}
+// ELIMINAR FOTOGRAFÍAS DE SUPABASE STORAGE
+async function eliminarImagenesStorage(imagenes) {
+    const rutas = imagenes.map(url => {
+        const partes = url.split('/productos/');
+
+        if (partes.length !== 2) {
+            throw new Error('No se pudo identificar la ruta de una fotografía.');
+        }
+
+        return decodeURIComponent(partes[1].split('?')[0]);
+    });
+
+    if (rutas.length === 0) return;
+
+    const { error } = await supabase.storage
+        .from('productos')
+        .remove(rutas);
+
+    if (error) {
+        throw error;
+    }
+}
+
+// ELIMINAR FOTOGRAFÍAS DE UN PRODUCTO
+async function eliminarImagenesProducto(producto) {
+    const urls = producto.imagenes?.length
+        ? producto.imagenes
+        : (producto.imagen_url ? [producto.imagen_url] : []);
+
+    if (urls.length === 0) return;
+
+    const prefijo = '/storage/v1/object/public/productos/';
+
+    const rutas = urls.map(url => {
+        const posicion = url.indexOf(prefijo);
+
+        if (posicion === -1) {
+            throw new Error('No se pudo identificar la ruta de una fotografía.');
+        }
+
+        return decodeURIComponent(
+            url.substring(posicion + prefijo.length)
+        );
+    });
+
+    const { error } = await supabase.storage
+        .from('productos')
+        .remove(rutas);
+
+    if (error) {
+        throw error;
+    }
+}
+// ELIMINAR PRODUCTO COMPLETAMENTE
+// ARCHIVAR PRODUCTO Y ELIMINAR SUS FOTOGRAFÍAS
+async function eliminarProducto(id) {
+    const producto = productos.find(p => p.id === id);
+
+    if (!producto) {
+        alert('No se encontró el producto.');
+        return;
+    }
+
+    const nombre = producto.nombre || producto.modelo || 'este producto';
+
+    const confirmar = confirm(
+        `¿Retirar "${nombre}" del inventario?\n\n` +
+        'Se eliminarán sus fotografías, pero se conservará su historial de ventas.'
+    );
+
+    if (!confirmar) return;
+
+    try {
+
+        const { error } = await supabase
+            .from('productos')
+            .update({
+                eliminado: true,
+                activo: false,
+                destacado: false,
+                imagenes: [],
+                imagen_url: ''
+            })
+            .eq('id', id);
+
+        if (error) throw error;
+
+        alert('Producto archivado correctamente.');
+
+        await cargarProductos();
+
+    } catch (error) {
+        alert('No se pudo archivar el producto: ' + error.message);
+    }
+}
+
+function mostrarInventario() {
+    if (productos.length === 0) {
+        inventario.textContent = 'Todavía no hay productos registrados.';
+        return;
+    }
+
+    inventario.innerHTML = productos.map(producto => `
+        <div style="border:1px solid #ccc; padding:12px; margin:10px 0;">
+            <strong>${producto.nombre || producto.modelo || 'Sin nombre'}</strong>
+            ${producto.imagenes && producto.imagenes.length > 0 ? `
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0;">
+        ${producto.imagenes.map(url => `
+            <img
+                src="${url}"
+                alt="${producto.nombre || 'Producto'}"
+                style="width:120px; height:120px; object-fit:cover; border-radius:8px;"
+            >
+        `).join('')}
+    </div>
+` : ''}
+            <p>Marca: ${producto.marca || 'No especificada'}</p>
+            <p>Talla: ${producto.talla}</p>
+            ${producto.cm ? `<p>${producto.cm} cm</p>` : ''}
+            <p>Precio: <strong>Bs ${Number(producto.precio).toLocaleString('es-BO', { maximumFractionDigits: 0 })}</strong></p>
+            <p>Existencias: ${producto.cantidad}</p>
+            <p>
+    Destacado: ${producto.destacado ? 'Sí ⭐' : 'No'}
+</p>
+
+            <button class="btnEditar" data-id="${producto.id}">
+    Editar producto
+</button>
+
+${producto.cantidad > 0 ? `
+    <button class="btnRegistrarVenta" data-id="${producto.id}">
+        Registrar venta
+    </button>
+` : ''}
+<button class="btnEliminarProducto" data-id="${producto.id}">
+    Eliminar producto
+</button>
+        </div>
+    `).join('');
+}
+
+
+// CARGAR PRODUCTOS
+async function cargarProductos() {
+    const { data, error } = await supabase
+        .from('productos')
+        .select('*')
+        .eq('eliminado', false)
+        .order('id', { ascending: false });
+
+    if (error) {
+        inventario.textContent = 'Error cargando productos: ' + error.message;
+        return false;
+    }
+
+    productos = data || [];
+    mostrarInventario();
+
+    return true;
+}
+// CARGAR HISTORIAL DE VENTAS
+async function cargarHistorialVentas() {
+    const contenedor = document.getElementById('historialVentas');
+
+    contenedor.textContent = 'Cargando historial de ventas...';
+
+    const { data: ventas, error } = await supabase
+        .from('ventas')
+        .select('*')
+        .order('fecha', { ascending: false });
+
+    if (error) {
+        contenedor.textContent =
+            'Error al cargar las ventas: ' + error.message;
+        return;
+    }
+
+    if (!ventas || ventas.length === 0) {
+        contenedor.textContent = 'Todavía no hay ventas registradas.';
+        return;
+    }
+
+    const escapar = valor => String(valor ?? '').replace(/[&<>"']/g, caracter => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[caracter]));
+
+    const registros = await Promise.all(
+        ventas.map(async venta => {
+            const { data: detalles, error: errorDetalles } = await supabase
+                .from('detalle_ventas')
+                .select('*')
+                .eq('venta_id', venta.id);
+
+            if (errorDetalles) {
+    const ventaAnulada = venta.estado === 'anulada';
+
+    return `
+        <div style="
+            border:1px solid #ccc;
+            padding:15px;
+            margin:12px 0;
+            border-radius:8px;
+        ">
+            <h4>Venta #${escapar(venta.id)}</h4>
+            <p>Fecha: ${escapar(venta.fecha)}</p>
+            <p>Estado: ${ventaAnulada ? 'VENTA ANULADA' : 'CONFIRMADA'}</p>
+            <p>Total: Bs ${escapar(venta.total)}</p>
+            <p>Notas: ${escapar(venta.notas || 'Sin notas')}</p>
+            <p>No se pudieron cargar los detalles de esta venta.</p>
+        </div>
+    `;
+}
+
+            const productosVendidos = (detalles || []).map(detalle => `
+                <div style="background:#f5f5f5; padding:10px; margin:8px 0;">
+                    <strong>${escapar(detalle.nombre_producto)}</strong>
+                    <p>Talla: ${escapar(detalle.talla)}</p>
+                    <p>Cantidad: ${escapar(detalle.cantidad)}</p>
+                    <p>Precio unitario: Bs ${escapar(detalle.precio_unitario)}</p>
+                    <p>Subtotal: Bs ${
+                        (
+                            Number(detalle.cantidad) *
+                            Number(detalle.precio_unitario)
+                        ).toFixed(2)
+                    }</p>
+                </div>
+            `).join('');
+
+            return `
+                <div style="border:1px solid #ccc; padding:15px; margin:12px 0; border-radius:8px;">
+                    <h4>Venta #${escapar(venta.id)}</h4>
+                    <p>Fecha: ${escapar(venta.fecha)}</p>
+                    <p>Estado: <strong>${escapar(venta.estado)}</strong></p>
+                    <p>Total: <strong>Bs ${escapar(venta.total)}</strong></p>
+                    <p>Notas: ${escapar(venta.notas || 'Sin notas')}</p>
+
+${venta.estado === 'confirmada' ? `
+    <button type="button" data-anular-venta="${escapar(venta.id)}">
+        Anular venta
+    </button>
+` : ''}
+
+<h4>Productos vendidos:</h4>
+                    ${productosVendidos || '<p>Sin detalles registrados.</p>'}
+                </div>
+            `;
+        })
+    );
+
+    contenedor.innerHTML = registros.join('');
+}
+// MOSTRAR U OCULTAR HISTORIAL DE VENTAS
+const btnHistorialVentas = document.getElementById('btnHistorialVentas');
+const historialVentas = document.getElementById('historialVentas');
+
+btnHistorialVentas.addEventListener('click', async () => {
+    if (historialVentas.hidden) {
+        historialVentas.hidden = false;
+        btnHistorialVentas.textContent = 'Ocultar historial de ventas';
+
+        await cargarHistorialVentas();
+    } else {
+        historialVentas.hidden = true;
+        btnHistorialVentas.textContent = 'Ver historial de ventas';
+    }
+});
+// ANULAR VENTA DESDE EL HISTORIAL
+document.getElementById('historialVentas').addEventListener('click', async (e) => {
+    const boton = e.target.closest('[data-anular-venta]');
+
+    if (!boton) return;
+
+    const ventaId = Number(boton.dataset.anularVenta);
+
+    const confirmar = confirm(
+        `¿Estás seguro de anular la venta #${ventaId}? Se restaurará el inventario.`
+    );
+
+    if (!confirmar) return;
+
+    boton.disabled = true;
+    boton.textContent = 'Anulando...';
+
+    const { error } = await supabase.rpc('anular_venta', {
+        p_venta_id: ventaId
+    });
+
+    if (error) {
+        alert('No se pudo anular la venta: ' + error.message);
+        boton.disabled = false;
+        boton.textContent = 'Anular venta';
+        return;
+    }
+
+    alert('Venta anulada correctamente. El inventario fue restaurado.');
+
+    await cargarProductos();
+    await cargarHistorialVentas();
+});
+
+
+// REGISTRAR O ACTUALIZAR PRODUCTO
+formularioProducto.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    mensajeProducto.textContent = 'Guardando producto...';
+
+    const nuevoProducto = {
+        nombre: document.getElementById('nombre').value.trim(),
+        marca: document.getElementById('marca').value.trim() || null,
+        modelo: document.getElementById('modelo').value.trim() || null,
+        procedencia: document.getElementById('procedencia').value || null,
+        genero: document.getElementById('genero').value,
+        talla: Number(document.getElementById('talla').value),
+        cm: document.getElementById('cm').value === ''
+            ? null
+            : Number(document.getElementById('cm').value),
+        precio: Number(document.getElementById('precio').value),
+        cantidad: Number(document.getElementById('cantidad').value),
+        activo: document.getElementById('activo').checked,
+destacado: document.getElementById('destacado').checked
+    };
+
+    const archivos = Array.from(selectorImagenes.files || []);
+    let idProducto;
+    let imagenesExistentes = [];
+    let imagenesEliminadas = [];
+
+    if (productoEnEdicion !== null) {
+        const productoActual = productos.find(
+            p => p.id === productoEnEdicion
+        );
+
+        idProducto = productoEnEdicion;
+        imagenesExistentes = imagenesParaConservar;
+        imagenesEliminadas = (productoActual?.imagenes || []).filter(
+    url => !imagenesExistentes.includes(url)
+);
+
+        const { error } = await supabase
+            .from('productos')
+            .update(nuevoProducto)
+            .eq('id', idProducto);
+
+        if (error) {
+            mensajeProducto.textContent = 'Error: ' + error.message;
+            return;
+        }
+
+    } else {
+        const { data, error } = await supabase
+            .from('productos')
+            .insert([{
+                ...nuevoProducto,
+                imagen_url: '',
+                imagenes: []
+            }])
+            .select()
+            .single();
+
+        if (error) {
+            mensajeProducto.textContent = 'Error: ' + error.message;
+            return;
+        }
+
+        idProducto = data.id;
+    }
+
+    // SUBIR IMÁGENES SELECCIONADAS
+    let nuevasImagenes = [];
+
+    if (archivos.length > 0) {
+        mensajeProducto.textContent = 'Subiendo fotografías...';
+
+        try {
+            nuevasImagenes = await subirImagenes(idProducto, archivos);
+        } catch (error) {
+            mensajeProducto.textContent =
+                'El producto se guardó, pero hubo un error al subir las imágenes: ' +
+                error.message;
+
+            await cargarProductos();
+            return;
+        }
+    }
+    
+
+    // CONSERVAR IMÁGENES ANTERIORES Y AGREGAR LAS NUEVAS
+    const todasLasImagenes = [
+        ...imagenesExistentes,
+        ...nuevasImagenes
+    ];
+
+    if (archivos.length > 0 || productoEnEdicion !== null) {
+        const { error } = await supabase
+            .from('productos')
+            .update({
+                imagenes: todasLasImagenes,
+                imagen_url: todasLasImagenes[0] || ''
+            })
+            .eq('id', idProducto);
+
+        if (error) {
+            mensajeProducto.textContent =
+                'Producto guardado, pero hubo un error al asociar las imágenes: ' +
+                error.message;
+
+            await cargarProductos();
+            return;
+        }
+    }
+    // ELIMINAR FOTOGRAFÍAS QUE YA NO SE CONSERVAN
+if (imagenesEliminadas.length > 0) {
+    try {
+        await eliminarImagenesStorage(imagenesEliminadas);
+    } catch (error) {
+        mensajeProducto.textContent =
+            'Producto actualizado, pero no se pudieron eliminar algunas fotografías: ' +
+            error.message;
+
+        await cargarProductos();
+        return;
+    }
+}
+
+    const estabaEditando = productoEnEdicion !== null;
+
+    productoEnEdicion = null;
+imagenesParaConservar = [];
+contenedorImagenes.innerHTML = '';
+
+formularioProducto.reset();
+document.getElementById('activo').checked = true;
+selectorImagenes.value = '';
+
+    mensajeProducto.textContent = estabaEditando
+        ? '¡Producto actualizado correctamente!'
+        : '¡Producto registrado correctamente!';
+
+    await cargarProductos();
+});
+// QUITAR FOTOGRAFÍA DE LA LISTA
+contenedorImagenes.addEventListener('click', (e) => {
+    const boton = e.target.closest('.btnQuitarImagen');
+
+    if (!boton) return;
+
+    const indice = Number(boton.dataset.indice);
+
+    imagenesParaConservar.splice(indice, 1);
+
+    mostrarImagenesActuales();
+});
+// BOTÓN ELIMINAR PRODUCTO
+document.getElementById('inventario').addEventListener('click', async (e) => {
+    const boton = e.target.closest('.btnEliminarProducto');
+
+    if (!boton) return;
+
+    const id = Number(boton.dataset.id);
+    const textoOriginal = boton.textContent;
+
+    boton.disabled = true;
+    boton.textContent = 'Eliminando...';
+
+    await eliminarProducto(id);
+
+    if (boton.isConnected) {
+        boton.disabled = false;
+        boton.textContent = textoOriginal;
+    }
+});
+// BOTONES EDITAR
+// MOSTRAR FOTOGRAFÍAS ACTUALES
+function mostrarImagenesActuales() {
+    contenedorImagenes.innerHTML = '';
+
+    imagenesParaConservar.forEach((url, indice) => {
+        const elemento = document.createElement('div');
+
+        elemento.style.position = 'relative';
+        elemento.style.width = '85px';
+        elemento.style.height = '85px';
+
+        elemento.innerHTML = `
+            <img src="${url}"
+                 style="width:100%; height:100%; object-fit:cover; border-radius:8px;">
+
+            <button type="button"
+                    data-indice="${indice}"
+                    class="btnQuitarImagen"
+                    style="position:absolute; top:-7px; right:-7px;
+                           width:24px; height:24px; border:0;
+                           border-radius:50%; background:#e53935;
+                           color:white; cursor:pointer;">
+                ×
+            </button>
+        `;
+
+        contenedorImagenes.appendChild(elemento);
+    });
+}
+document.addEventListener('click', (e) => {
+    const boton = e.target.closest('.btnEditar');
+
+    if (!boton) return;
+
+    const id = Number(boton.dataset.id);
+    const producto = productos.find(p => p.id === id);
+
+    if (!producto) {
+        mensajeProducto.textContent = 'No se encontró el producto.';
+        return;
+    }
+
+    productoEnEdicion = id;
+    imagenesParaConservar = [...(producto.imagenes || [])];
+
+mostrarImagenesActuales();
+
+    document.getElementById('nombre').value = producto.nombre || '';
+    document.getElementById('marca').value = producto.marca || '';
+    document.getElementById('modelo').value = producto.modelo || '';
+    document.getElementById('procedencia').value = producto.procedencia || '';
+    document.getElementById('genero').value = producto.genero || '';
+    document.getElementById('talla').value = producto.talla ?? '';
+    document.getElementById('cm').value = producto.cm ?? '';
+    document.getElementById('precio').value = producto.precio ?? '';
+    document.getElementById('cantidad').value = producto.cantidad ?? 0;
+    document.getElementById('activo').checked = producto.activo;
+    document.getElementById('destacado').checked = producto.destacado || false;
+
+    mensajeProducto.textContent = 'Editando: ' + producto.nombre;
+
+    formularioProducto.scrollIntoView({ behavior: 'smooth' });
+});
+
+
+ // REGISTRAR VENTA
+document.addEventListener('click', async (e) => {
+    const boton = e.target.closest('.btnRegistrarVenta');
+
+    if (!boton) return;
+
+    const id = Number(boton.dataset.id);
+    const producto = productos.find(p => p.id === id);
+
+    if (!producto || producto.cantidad <= 0) {
+        alert('Este producto no tiene existencias disponibles.');
+        return;
+    }
+
+    const respuesta = prompt(
+        `Producto: ${producto.nombre || producto.modelo}\n` +
+        `Existencias: ${producto.cantidad}\n\n` +
+        '¿Cuántas unidades se vendieron?'
+    );
+
+    if (respuesta === null) return;
+
+    const cantidad = Number(respuesta);
+
+    if (
+        !Number.isInteger(cantidad) ||
+        cantidad <= 0 ||
+        cantidad > producto.cantidad
+    ) {
+        alert('La cantidad ingresada no es válida.');
+        return;
+    }
+
+    if (!confirm(
+        `¿Confirmas la venta de ${cantidad} unidad(es)?`
+    )) {
+        return;
+    }
+
+    boton.disabled = true;
+    boton.textContent = 'Registrando...';
+
+    const { data, error } = await supabase.rpc('registrar_venta', {
+        p_producto_id: id,
+        p_cantidad: cantidad,
+        p_notas: null
+    });
+
+    if (error) {
+        alert('No se pudo registrar la venta: ' + error.message);
+        boton.disabled = false;
+        boton.textContent = 'Registrar venta';
+        return;
+    }
+
+    await cargarProductos();
+
+    const productoActual = productos.find(p => p.id === id);
+
+    if (productoActual && productoActual.cantidad === 0) {
+        try {
+            
+
+            const { error: errorActualizacion } = await supabase
+                .from('productos')
+                .update({
+                    imagenes: [],
+                    imagen_url: ''
+                })
+                .eq('id', id);
+
+            if (errorActualizacion) {
+                throw errorActualizacion;
+            }
+
+            await cargarProductos();
+
+            alert(
+                'Venta registrada correctamente. ' +
+                'Las fotografías del producto fueron eliminadas.'
+            );
+
+        } catch (error) {
+            alert(
+                'La venta se registró correctamente, pero no se pudieron ' +
+                'eliminar todas las fotografías: ' + error.message
+            );
+        }
+    } else {
+        alert('¡Venta registrada correctamente!');
+    }
+});
+
+// VERIFICAR ACCESO
+async function verificarAcceso() {
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session) {
+        window.location.href = './admin.html';
+        return;
+    }
+
+    const { data, error } = await supabase.rpc('es_administrador');
+
+    if (error || data !== true) {
+        await supabase.auth.signOut();
+        window.location.href = './admin.html';
+        return;
+    }
+
+    estado.textContent = 'Acceso autorizado. Bienvenido al panel.';
+
+    await cargarProductos();
+
+botonCerrar.hidden = false;
+}
+
+
+// CERRAR SESIÓN
+botonCerrar.addEventListener('click', async () => {
+    await supabase.auth.signOut();
+    window.location.href = './admin.html';
+});
+
+verificarAcceso();
+    </script>
+
+</body>
+</html>

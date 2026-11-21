@@ -1,0 +1,135 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Administración - TiendaTenis</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f2f2f2;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        .login {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            width: 320px;
+            box-shadow: 0 4px 18px #0002;
+        }
+
+        h2 {
+            text-align: center;
+        }
+
+        input, button {
+            box-sizing: border-box;
+            width: 100%;
+            padding: 12px;
+            margin-top: 12px;
+            border-radius: 6px;
+            font-size: 15px;
+        }
+
+        input {
+            border: 1px solid #ccc;
+        }
+
+        button {
+            background: #111;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        #mensaje {
+            text-align: center;
+            font-size: 14px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="login">
+        <h2>TiendaTenis</h2>
+        <p>Acceso de administrador</p>
+
+        <form id="formLogin">
+            <input
+                type="email"
+                id="email"
+                placeholder="Correo electrónico"
+                required
+            >
+
+            <input
+                type="password"
+                id="password"
+                placeholder="Contraseña"
+                required
+            >
+
+            <button type="submit">Ingresar</button>
+        </form>
+
+        <p id="mensaje"></p>
+    </div>
+
+    <script type="module">
+        import { supabase } from './supabase-config.js';
+
+        const formulario = document.getElementById('formLogin');
+        const mensaje = document.getElementById('mensaje');
+
+        async function comprobarAdministrador() {
+            const { data: { session } } =
+                await supabase.auth.getSession();
+
+            if (!session) return;
+
+            const { data, error } = await supabase.rpc('es_administrador');
+
+if (error || data !== true) {
+    mensaje.textContent =
+        'No se pudo verificar el acceso de administrador.';
+    await supabase.auth.signOut();
+    return;
+}
+
+            mensaje.textContent = 'Acceso autorizado.';
+        }
+
+        formulario.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            mensaje.textContent = 'Verificando acceso...';
+
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            const { error } = await supabase.auth.signInWithPassword({
+                email,
+                password
+            });
+
+            if (error) {
+                mensaje.textContent =
+                    'No se pudo iniciar sesión. Revisa tus datos.';
+                return;
+            }
+
+            await comprobarAdministrador();
+        });
+
+        comprobarAdministrador();
+    </script>
+
+</body>
+</html>
