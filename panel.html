@@ -489,9 +489,15 @@ destacado: document.getElementById('destacado').checked
             .eq('id', idProducto);
 
         if (error) {
-            mensajeProducto.textContent = 'Error: ' + error.message;
-            return;
-        }
+    mensajeProducto.textContent =
+        'Error: ' + error.message +
+        '\nCódigo: ' + (error.code || '') +
+        '\nDetalles: ' + (error.details || '') +
+        '\nSugerencia: ' + (error.hint || '');
+
+    console.error('Error completo al guardar producto:', error);
+    return;
+}
 
     } else {
         const { data, error } = await supabase
