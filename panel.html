@@ -13,6 +13,20 @@
     <p id="estado">Verificando acceso...</p>
     <h3>Inventario de productos</h3>
 
+<div id="filtrosInventario" style="display:flex; flex-wrap:wrap; gap:10px; margin:12px 0;">
+    <input type="search" id="buscarInventario" placeholder="Buscar nombre, marca o modelo..." style="flex:1; min-width:180px;">
+    <select id="filtrarTalla">
+        <option value="">Todas las tallas</option>
+    </select>
+    <select id="filtrarEstado">
+        <option value="todos">Todos los productos</option>
+        <option value="con-stock">Con existencias</option>
+        <option value="sin-stock">Sin existencias (vendidos o agotados)</option>
+    </select>
+    <button type="button" id="limpiarFiltros">Limpiar filtros</button>
+</div>
+<p id="resumenFiltros"></p>
+
 <div id="inventario">
     Cargando productos...
 </div>
@@ -107,6 +121,10 @@ const mensajeProducto = document.getElementById('mensajeProducto');
 const inventario = document.getElementById('inventario');
 const selectorImagenes = document.getElementById('imagenesProducto');
 const contenedorImagenes = document.getElementById('imagenesActuales');
+const buscarInventario = document.getElementById('buscarInventario');
+const filtrarTalla = document.getElementById('filtrarTalla');
+const filtrarEstado = document.getElementById('filtrarEstado');
+const resumenFiltros = document.getElementById('resumenFiltros');
 
 let productos = [];
 let productoEnEdicion = null;
@@ -236,13 +254,50 @@ async function eliminarProducto(id) {
     }
 }
 
+function actualizarTallasFiltro() {
+    const tallaActual = filtrarTalla.value;
+    const tallas = [...new Set(productos.map(p => p.talla).filter(t => t != null))]
+        .sort((a, b) => Number(a) - Number(b));
+
+    filtrarTalla.innerHTML = '<option value="">Todas las tallas</option>' +
+        tallas.map(t => `<option value="${t}">${t}</option>`).join('');
+
+    if (tallas.some(t => String(t) === tallaActual)) {
+        filtrarTalla.value = tallaActual;
+    }
+}
+
 function mostrarInventario() {
-    if (productos.length === 0) {
-        inventario.textContent = 'Todavía no hay productos registrados.';
+    const texto = buscarInventario.value.trim().toLowerCase();
+    const tallaSeleccionada = filtrarTalla.value;
+    const estadoSeleccionado = filtrarEstado.value;
+
+    const filtrados = productos.filter(producto => {
+        const coincideTexto = !texto || [
+            producto.nombre, producto.marca, producto.modelo
+        ].some(valor => String(valor || '').toLowerCase().includes(texto));
+
+        const coincideTalla = !tallaSeleccionada ||
+            String(producto.talla) === tallaSeleccionada;
+
+        const tieneStock = Number(producto.cantidad) > 0;
+        const coincideEstado =
+            estadoSeleccionado === 'todos' ||
+            (estadoSeleccionado === 'con-stock' && tieneStock) ||
+            (estadoSeleccionado === 'sin-stock' && !tieneStock);
+
+        return coincideTexto && coincideTalla && coincideEstado;
+    });
+
+    resumenFiltros.textContent =
+        `Mostrando ${filtrados.length} de ${productos.length} productos`;
+
+    if (filtrados.length === 0) {
+        inventario.textContent = 'No se encontraron productos con esos filtros.';
         return;
     }
 
-    inventario.innerHTML = productos.map(producto => `
+    inventario.innerHTML = filtrados.map(producto => `
         <div style="border:1px solid #ccc; padding:12px; margin:10px 0;">
             <strong>${producto.nombre || producto.modelo || 'Sin nombre'}</strong>
             ${producto.imagenes && producto.imagenes.length > 0 ? `
@@ -261,28 +316,27 @@ function mostrarInventario() {
             ${producto.cm ? `<p>${producto.cm} cm</p>` : ''}
             <p>Precio: <strong>Bs ${Number(producto.precio).toLocaleString('es-BO', { maximumFractionDigits: 0 })}</strong></p>
             <p>Existencias: ${producto.cantidad}</p>
-            <p>
-    Destacado: ${producto.destacado ? 'Sí ⭐' : 'No'}
-</p>
-
-            <button class="btnEditar" data-id="${producto.id}">
-    Editar producto
-</button>
-
-${producto.cantidad > 0 ? `
-    <button class="btnRegistrarVenta" data-id="${producto.id}">
-        Registrar venta
-    </button>
-` : ''}
-<button class="btnEliminarProducto" data-id="${producto.id}">
-    Eliminar producto
-</button>
+            <p>Estado de inventario: <strong>${Number(producto.cantidad) > 0 ? 'Disponible' : 'Sin existencias'}</strong></p>
+            <p>Destacado: ${producto.destacado ? 'Sí ⭐' : 'No'}</p>
+            <button class="btnEditar" data-id="${producto.id}">Editar producto</button>
+            ${producto.cantidad > 0 ? `
+                <button class="btnRegistrarVenta" data-id="${producto.id}">Registrar venta</button>
+            ` : ''}
+            <button class="btnEliminarProducto" data-id="${producto.id}">Eliminar producto</button>
         </div>
     `).join('');
 }
 
+buscarInventario.addEventListener('input', mostrarInventario);
+filtrarTalla.addEventListener('change', mostrarInventario);
+filtrarEstado.addEventListener('change', mostrarInventario);
+document.getElementById('limpiarFiltros').addEventListener('click', () => {
+    buscarInventario.value = '';
+    filtrarTalla.value = '';
+    filtrarEstado.value = 'todos';
+    mostrarInventario();
+});
 
-// CARGAR PRODUCTOS
 async function cargarProductos() {
     const { data, error } = await supabase
         .from('productos')
@@ -296,6 +350,7 @@ async function cargarProductos() {
     }
 
     productos = data || [];
+    actualizarTallasFiltro();
     mostrarInventario();
 
     return true;
