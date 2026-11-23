@@ -578,6 +578,16 @@ footer span {
     touch-action: none;
 }
 
+/* Capas temporales para el cambio suave entre fotografías */
+.visor-imagen-salida {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+}
+
 .visor-cerrar {
     position: absolute;
     top: 20px;
@@ -1085,14 +1095,58 @@ function cerrarVentana() {
     }
 }
 
+let animacionCambioFotoActiva = false;
+
 function cambiarFoto(direccion) {
-    if (fotosVisor.length <= 1) return;
+    if (fotosVisor.length <= 1 || animacionCambioFotoActiva) return;
+
+    // Si la imagen está ampliada, cambiar sin animación para no interferir con el zoom.
+    if (nivelZoom > 1) {
+        indiceVisor =
+            (indiceVisor + direccion + fotosVisor.length)
+            % fotosVisor.length;
+        actualizarVisor();
+        return;
+    }
+
+    const contenido = imagenAmpliada.parentElement;
+    const imagenSalida = imagenAmpliada.cloneNode(false);
+    imagenSalida.removeAttribute('id');
+    imagenSalida.setAttribute('aria-hidden', 'true');
+    imagenSalida.classList.add('visor-imagen-salida');
+    imagenSalida.style.transform = 'none';
+    imagenSalida.style.maxWidth = '100%';
+    imagenSalida.style.maxHeight = '100%';
+    contenido.appendChild(imagenSalida);
 
     indiceVisor =
         (indiceVisor + direccion + fotosVisor.length)
         % fotosVisor.length;
 
     actualizarVisor();
+    animacionCambioFotoActiva = true;
+
+    const duracion = 340;
+    const desplazamiento = direccion > 0 ? -22 : 22;
+
+    const animacionSalida = imagenSalida.animate([
+        { transform: 'translateX(0)', opacity: 1 },
+        { transform: `translateX(${desplazamiento}%)`, opacity: 0.25 }
+    ], { duration: duracion, easing: 'cubic-bezier(.22,.61,.36,1)' });
+
+    const animacionEntrada = imagenAmpliada.animate([
+        { transform: `translateX(${-desplazamiento}%)`, opacity: 0.35 },
+        { transform: 'translateX(0)', opacity: 1 }
+    ], { duration: duracion, easing: 'cubic-bezier(.22,.61,.36,1)' });
+
+    Promise.all([
+        animacionSalida.finished.catch(() => {}),
+        animacionEntrada.finished.catch(() => {})
+    ]).finally(() => {
+        imagenSalida.remove();
+        imagenAmpliada.style.transform = 'translate(0px, 0px) scale(1)';
+        animacionCambioFotoActiva = false;
+    });
 }
 
 // Abrir al tocar una fotografía del catálogo
