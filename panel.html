@@ -312,10 +312,15 @@ async function cargarHistorialVentas() {
         .order('fecha', { ascending: false });
 
     if (error) {
-        contenedor.textContent =
-            'Error al cargar las ventas: ' + error.message;
-        return;
-    }
+    mensajeProducto.textContent =
+        'Error: ' + error.message +
+        '\nCódigo: ' + (error.code || '') +
+        '\nDetalles: ' + (error.details || '') +
+        '\nSugerencia: ' + (error.hint || '');
+
+    console.error('Error completo al registrar producto:', error);
+    return;
+}
 
     if (!ventas || ventas.length === 0) {
         contenedor.textContent = 'Todavía no hay ventas registradas.';

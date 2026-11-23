@@ -1048,18 +1048,41 @@ desplazamientoY = 0;
 imagenAmpliada.style.transform = "translate(0px, 0px) scale(1)";
 }
 
+let estadoVisorEnHistorial = false;
+
 function abrirVisor(fotos, indice) {
     fotosVisor = fotos;
     indiceVisor = indice;
 
     actualizarVisor();
+
+    // Registrar el visor en el historial del navegador
+    history.pushState(
+        { danikiVisor: true },
+        ""
+    );
+
+    estadoVisorEnHistorial = true;
+
     visor.classList.add("activo");
     document.body.style.overflow = "hidden";
 }
 
-function cerrarVentana() {
+function cerrarVisualmente() {
     visor.classList.remove("activo");
     document.body.style.overflow = "";
+}
+
+function cerrarVentana() {
+    if (!visor.classList.contains("activo")) return;
+
+    // Si el visor tiene un estado en el historial,
+    // regresar a ese estado anterior.
+    if (estadoVisorEnHistorial) {
+        history.back();
+    } else {
+        cerrarVisualmente();
+    }
 }
 
 function cambiarFoto(direccion) {
@@ -1275,6 +1298,14 @@ imagenAmpliada.addEventListener("dblclick", (e) => {
         e.clientX,
         e.clientY
     );
+});
+
+// Cerrar visor al usar el botón Atrás del navegador o celular
+window.addEventListener("popstate", () => {
+    if (visor.classList.contains("activo")) {
+        estadoVisorEnHistorial = false;
+        cerrarVisualmente();
+    }
 });
 
 // Cerrar con Escape y navegar con flechas del teclado
